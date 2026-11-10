@@ -43,12 +43,11 @@ class MainActivity : ComponentActivity() {
 private fun LabScreen(context: Context) {
     val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
     val memory = ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo)
-    val vulkan = if (Build.VERSION.SDK_INT >= 24) {
-        context.packageManager.hasSystemFeature("android.hardware.vulkan.level")
-    } else false
     val abiList = Build.SUPPORTED_ABIS.joinToString()
 
-    var result by remember { mutableStateOf<BenchmarkResult?>(null) }
+    var cpuResult by remember { mutableStateOf<BenchmarkResult?>(null) }
+    var gpuReport by remember { mutableStateOf("Ainda não executado") }
+    var qnnReport by remember { mutableStateOf("Ainda não executado") }
     var running by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -57,7 +56,7 @@ private fun LabScreen(context: Context) {
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text("Snapdragon AI Lab", style = MaterialTheme.typography.headlineMedium)
-        Text("Build 0.1.0 • Device Inspector + CPU baseline")
+        Text("Build 0.2.0 • Device Inspector + CPU + Vulkan/QNN diagnostics")
 
         InfoCard("Dispositivo") {
             InfoLine("Fabricante", Build.MANUFACTURER)
@@ -72,41 +71,76 @@ private fun LabScreen(context: Context) {
             InfoLine("RAM total", formatMb(memory.totalMem / (1024 * 1024)))
             InfoLine("RAM disponível agora", formatMb(memory.availMem / (1024 * 1024)))
             InfoLine("Low memory", if (memory.lowMemory) "Sim" else "Não")
-            Text("A RAM disponível muda constantemente e não representa memória garantida para o app.",
-                style = MaterialTheme.typography.bodySmall)
+            Text(
+                "A RAM disponível muda constantemente e não representa memória garantida para o app.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
 
-        InfoCard("Aceleradores") {
-            InfoLine("Vulkan feature flag", if (vulkan) "Presente" else "Não reportada")
-            InfoLine("CPU", "Disponível • benchmark inicial")
-            InfoLine("GPU", "Ainda não testada • backend será integrado")
-            InfoLine("Hexagon / QNN HTP", "Ainda não testada • sem alegar execução")
-        }
-
-        InfoCard("Benchmark CPU") {
-            Text("Executa uma carga determinística de contagem de números primos. Serve como linha de base, não como comparação direta com NPU/GPU.")
+        InfoCard("CPU • benchmark") {
+            Text("Carga determinística de contagem de primos. É uma linha de base, não uma comparação direta com GPU/NPU.")
             Button(
                 enabled = !running,
                 onClick = {
                     running = true
                     scope.launch {
-                        result = withContext(Dispatchers.Default) {
+                        cpuResult = withContext(Dispatchers.Default) {
                             BenchmarkEngine.runCpuPrimeBenchmark()
                         }
                         running = false
                     }
                 }
-            ) {
-                Text(if (running) "Executando..." else "Executar benchmark CPU")
-            }
-            result?.let {
+            ) { Text(if (running) "Executando..." else "Executar benchmark CPU") }
+            cpuResult?.let {
                 InfoLine("Tempo", "${it.elapsedMs} ms")
-                InfoLine("Números analisados", it.operations.toString())
-                InfoLine("Primos encontrados", it.score.let { score -> "%.1f primos/s".format(score) })
+                InfoLine("Limite analisado", it.operations.toString())
+                InfoLine("Desempenho", "%.1f primos/s".format(it.score))
             }
         }
 
-        Text("Próxima etapa: validar QNN/HTP no Snapdragon 6 Gen 3 e registrar o backend real nos logs.")
+        InfoCard("GPU Adreno • Vulkan") {
+            Text("Enumera dispositivos Vulkan, procura uma fila COMPUTE e tenta criar um dispositivo lógico.")
+            Button(
+                enabled = !running,
+                onClick = {
+                    running = true
+                    scope.launch {
+                        gpuReport = withContext(Dispatchers.IO) {
+                            AcceleratorDiagnostics.runGpuProbe()
+                        }
+                        running = false
+                    }
+                }
+            ) { Text("Analisar GPU / Vulkan") }
+            Text(gpuReport, style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Esta etapa valida acesso à fila de compute; ainda não mede execução de shader nem throughput.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        InfoCard("NPU Hexagon • QNN / HTP") {
+            Text("Verifica se as bibliotecas centrais do runtime QNN podem ser carregadas pelo app.")
+            Button(
+                enabled = !running,
+                onClick = {
+                    running = true
+                    scope.launch {
+                        qnnReport = withContext(Dispatchers.IO) {
+                            AcceleratorDiagnostics.runQnnProbe()
+                        }
+                        running = false
+                    }
+                }
+            ) { Text("Verificar runtime QNN") }
+            Text(qnnReport, style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Biblioteca carregável não significa HTP inicializado. A confirmação da NPU exige inicializar o backend e executar um grafo QNN.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        Text("Próxima etapa: integrar as APIs QNN licenciadas e executar um modelo pequeno com confirmação do backend.")
     }
 }
 
